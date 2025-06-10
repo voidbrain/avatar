@@ -13,10 +13,18 @@
         v-for="anim in availableAnimations"
         :key="anim.name"
         @click="playAnimation(anim.name)"
-        :disabled="loading || currentAnimationType === anim.name"
+        :disabled="loading"
         :class="{ active: currentAnimationType === anim.name }"
       >
         {{ anim.label }}
+      </button>
+      <button
+        v-if="currentAnimation"
+        @click="toggleReverse()"
+        :disabled="loading"
+        :class="{ active: isReversed }"
+      >
+        {{ isReversed ? '⏩ Forward' : '⏪ Reverse' }}
       </button>
     </div>
     <div v-if="error" class="error-message">{{ error }}</div>
@@ -45,6 +53,8 @@ const threeContainer = ref(null)
 const loading = ref(false)
 const error = ref(null)
 const currentAnimationType = ref(null)
+const isTransitioning = ref(false) // New state for transition
+const isReversed = ref(false) // New state for reverse
 
 let scene = null
 let camera = null
@@ -55,6 +65,11 @@ let mixer = null
 let animationFrameId = null
 let clock = new THREE.Clock()
 let currentAnimation = null
+
+// Add these variables after your other state variables
+let currentTransition = null
+let previousPosition = null
+let previousTarget = null
 
 const availableAnimations = [
   { name: 'climbing', label: 'Climbing', url: climbingUrl },
@@ -72,6 +87,30 @@ let animations = {
   typing: null
 }
 
+// Add camera positions for each animation
+const cameraPositions = {
+  rest: {
+    position: [0, 1, 3],     // [x, y, z] - Front view, slightly elevated
+    target: [0, 1, 0]        // Looking at center of model
+  },
+  climbing: {
+    position: [5, 2, 2],     // [x, y, z] - Diagonal view from top-right
+    target: [0, 1, 0]        // Looking at center
+  },
+  frisbee: {
+    position: [-5, 1, 2],    // [x, y, z] - Left side view
+    target: [0, 1, 0]        // Looking at center
+  },
+  gaming: {
+    position: [0, 1.5, 3],   // [x, y, z] - Front view, slightly higher
+    target: [0, 1, 0]        // Looking at center
+  },
+  typing: {
+    position: [0, 3, -4],    // [x, y, z] - Behind and above (increased y to 3)
+    target: [0, 0.8, 0]      // Looking slightly down at the typing hands
+  }
+}
+
 const initThree = () => {
   try {
     const container = threeContainer.value
@@ -82,7 +121,7 @@ const initThree = () => {
     camera = new THREE.PerspectiveCamera(
       45,
       container.clientWidth / container.clientHeight,
-      0.1,
+      0.01,  // Reduced near plane for closer viewing
       1000
     )
     camera.position.set(0, 1, 3)
@@ -103,6 +142,10 @@ const initThree = () => {
     controls = new OrbitControls(camera, renderer.domElement)
     controls.target.set(0, 1, 0)
     controls.enableDamping = true
+    controls.minDistance = 2    // Increased minimum distance
+    controls.maxDistance = 10   // Keep maximum distance
+    controls.minPolarAngle = 0.1 * Math.PI  // Prevent camera going under model
+    controls.maxPolarAngle = 0.9 * Math.PI  // Prevent camera going over model
     controls.update()
 
     // Lighting setup
@@ -194,21 +237,117 @@ const loadModel = async () => {
   }
 }
 
-// Update the playAnimation function
+// Add a camera transition function
+const moveCamera = (type) => {
+  if (!controls || !camera) return
+
+  const targetPosition = cameraPositions[type]?.position || cameraPositions.rest.position
+  const targetLookAt = cameraPositions[type]?.target || cameraPositions.rest.target
+
+  // Cancel any ongoing transition
+  if (currentTransition) {
+    cancelAnimationFrame(currentTransition)
+    currentTransition = null
+  }
+
+  const startPosition = camera.position.clone()
+  const startTarget = controls.target.clone()
+  const endPosition = new THREE.Vector3(...targetPosition)
+  const endTarget = new THREE.Vector3(...targetLookAt)
+
+  // Calculate angles for spherical interpolation
+  const center = new THREE.Vector3(0, 1, 0)
+  const startSpherical = new THREE.Spherical().setFromVector3(
+    startPosition.clone().sub(center)
+  )
+  const endSpherical = new THREE.Spherical().setFromVector3(
+    endPosition.clone().sub(center)
+  )
+
+  // Ensure we take the shortest path around the model
+  if (Math.abs(endSpherical.phi - startSpherical.phi) > Math.PI) {
+    if (endSpherical.phi > startSpherical.phi) {
+      startSpherical.phi += 2 * Math.PI
+    } else {
+      endSpherical.phi += 2 * Math.PI
+    }
+  }
+  if (Math.abs(endSpherical.theta - startSpherical.theta) > Math.PI) {
+    if (endSpherical.theta > startSpherical.theta) {
+      startSpherical.theta += 2 * Math.PI
+    } else {
+      endSpherical.theta += 2 * Math.PI
+    }
+  }
+
+  let progress = 0
+  const duration = 1000 // 1 second transition
+  const startTime = performance.now()
+
+  const animateCamera = (currentTime) => {
+    const elapsed = currentTime - startTime
+    progress = Math.min(elapsed / duration, 1)
+
+    // Smooth easing
+    const ease = (t) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
+    const t = ease(progress)
+
+    // Interpolate spherical coordinates
+    const currentSpherical = new THREE.Spherical(
+      startSpherical.radius * (1 - t) + endSpherical.radius * t,
+      startSpherical.phi * (1 - t) + endSpherical.phi * t,
+      startSpherical.theta * (1 - t) + endSpherical.theta * t
+    )
+
+    // Convert back to Cartesian coordinates
+    const currentPosition = new THREE.Vector3().setFromSpherical(currentSpherical)
+    camera.position.copy(currentPosition.add(center))
+    controls.target.lerpVectors(startTarget, endTarget, t)
+    controls.update()
+
+    if (progress < 1) {
+      currentTransition = requestAnimationFrame(animateCamera)
+    } else {
+      currentTransition = null
+    }
+  }
+
+  currentTransition = requestAnimationFrame(animateCamera)
+}
+
+// Update playAnimation function to handle reverse initial state
 const playAnimation = (type) => {
   if (!mixer || !model || !animations[type]) {
     console.error(`Cannot play animation: ${type}`)
     return
   }
 
-  // Stop all current animations
+  moveCamera(type)
   mixer.stopAllAction()
 
-  // Play new animation with crossfade
   const action = mixer.clipAction(animations[type])
   action.reset()
-  action.setEffectiveTimeScale(1)
   action.setEffectiveWeight(1)
+
+  // Configure looping behavior
+  action.clampWhenFinished = true  // Stop at end of animation
+  action.loop = isReversed.value ? THREE.LoopOnce : THREE.LoopRepeat
+
+  // Set up animation direction and starting point
+  if (isReversed.value) {
+    action.timeScale = -1
+    action.time = action.getClip().duration  // Start from end
+
+    // Add finished callback for reverse
+    action.getMixer().addEventListener('finished', () => {
+      action.stop()  // Stop when reaching start
+      resetToRest()  // Return to rest pose
+    })
+  } else {
+    action.timeScale = 1
+    action.time = 0
+  }
+
   action.fadeIn(0.5)
   action.play()
 
@@ -216,22 +355,52 @@ const playAnimation = (type) => {
   currentAnimationType.value = type
 }
 
+// Update toggleReverse to handle animation reset
+const toggleReverse = () => {
+  if (!currentAnimation || !mixer) return
+
+  isReversed.value = !isReversed.value
+
+  // Restart animation in new direction
+  playAnimation(currentAnimationType.value)
+}
+
 // Update the resetToRest function
-const resetToRest = () => {
+const resetToRest = async () => {
   if (!mixer) return
 
-  // Stop all animations
-  mixer.stopAllAction()
+  try {
+    isTransitioning.value = true
 
-  // Reset to bind pose
-  model.traverse((child) => {
-    if (child.isSkinnedMesh && child.skeleton) {
-      child.skeleton.pose()
+    if (currentAnimation) {
+      const currentAction = currentAnimation
+      currentAction.timeScale = -1
+      currentAction.loop = THREE.LoopOnce
+      currentAction.clampWhenFinished = true
+
+      await new Promise(resolve => {
+        const onFinished = () => {
+          currentAction.getMixer().removeEventListener('finished', onFinished)
+          resolve()
+        }
+        currentAction.getMixer().addEventListener('finished', onFinished)
+      })
+
+      moveCamera('rest')
+      mixer.stopAllAction()
+
+      model.traverse((child) => {
+        if (child.isSkinnedMesh && child.skeleton) {
+          child.skeleton.pose()
+        }
+      })
+
+      currentAnimation = null
+      currentAnimationType.value = null
     }
-  })
-
-  currentAnimation = null
-  currentAnimationType.value = null
+  } finally {
+    isTransitioning.value = false
+  }
 }
 
 // Update the animate function
@@ -261,6 +430,7 @@ const onWindowResize = () => {
   }
 }
 
+// Update cleanup to include transition cleanup
 const cleanup = () => {
   if (animationFrameId) {
     cancelAnimationFrame(animationFrameId)
@@ -274,6 +444,10 @@ const cleanup = () => {
     renderer.dispose()
     renderer.forceContextLoss()
     renderer.domElement = null
+  }
+
+  if (currentTransition) {
+    cancelAnimationFrame(currentTransition)
   }
 
   window.removeEventListener('resize', onWindowResize)
