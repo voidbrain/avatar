@@ -9,26 +9,23 @@
       >
         Rest
       </button>
-      <button
-        v-for="anim in availableAnimations"
-        :key="anim.name"
-        @click="playAnimation(anim.name)"
-        :disabled="loading"
-        :class="{ active: currentAnimationType === anim.name }"
-      >
-        {{ anim.label }}
-      </button>
-      <button
-        v-if="currentAnimation"
-        @click="toggleReverse()"
-        :disabled="loading"
-        :class="{ active: isReversed }"
-      >
-        {{ isReversed ? '⏩ Forward' : '⏪ Reverse' }}
-      </button>
+      <div v-for="anim in availableAnimations" :key="anim.name" class="button-group">
+        <button
+          @click="playAnimation(anim.name, false)"
+          :disabled="loading"
+          :class="{ active: currentAnimationType === anim.name }"
+        >
+          {{ anim.label }}
+        </button>
+        <button
+          @click="playAnimation(anim.name, true)"
+          :disabled="loading"
+          class="reverse-button"
+        >
+          ⟲
+        </button>
+      </div>
     </div>
-    <div v-if="error" class="error-message">{{ error }}</div>
-    <div v-if="loading" class="loading-message">Loading model...</div>
   </div>
 </template>
 
@@ -172,7 +169,7 @@ const initThree = () => {
   }
 }
 
-// Update the loadModel function for better animation handling
+// Update loadModel function to prevent initial flickering
 const loadModel = async () => {
   loading.value = true
   const gltfLoader = new GLTFLoader()
@@ -183,14 +180,10 @@ const loadModel = async () => {
     const gltf = await gltfLoader.loadAsync(avatarUrl)
     model = gltf.scene
 
-    // Setup animation mixer first
+    // Setup mixer before any position changes
     mixer = new THREE.AnimationMixer(model)
 
-    // Store the bind pose
-    const bindPose = new THREE.AnimationClip('bindPose', 0, [])
-    animations.rest = bindPose
-
-    // Update materials and setup skinning
+    // Setup model before adding to scene
     model.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true
@@ -200,7 +193,7 @@ const loadModel = async () => {
           child.material = new THREE.MeshStandardMaterial({
             map: oldMaterial.map,
             color: oldMaterial.color,
-            skinning: true, // Enable skinning for animations
+            skinning: true,
             roughness: 0.8,
             metalness: 0.0
           })
@@ -208,6 +201,7 @@ const loadModel = async () => {
       }
     })
 
+    // Set position and scale after materials are set
     model.position.set(0, 0, 0)
     model.scale.set(1, 1, 1)
     scene.add(model)
@@ -315,44 +309,130 @@ const moveCamera = (type) => {
   currentTransition = requestAnimationFrame(animateCamera)
 }
 
-// Update playAnimation function to handle reverse initial state
-const playAnimation = (type) => {
+// Update playAnimation function to properly handle reverse animation
+const playAnimation = async (type, reverse = false) => {
   if (!mixer || !model || !animations[type]) {
     console.error(`Cannot play animation: ${type}`)
     return
   }
 
-  moveCamera(type)
-  mixer.stopAllAction()
+  try {
+    isTransitioning.value = true
+    console.log('Starting new animation:', type, reverse ? '(reversed)' : '')
 
-  const action = mixer.clipAction(animations[type])
-  action.reset()
-  action.setEffectiveWeight(1)
+    // Stop any current animation
+    mixer.stopAllAction()
 
-  // Configure looping behavior
-  action.clampWhenFinished = true  // Stop at end of animation
-  action.loop = isReversed.value ? THREE.LoopOnce : THREE.LoopRepeat
+    if (currentAnimation) {
+      const currentAction = currentAnimation
+      currentAction.timeScale = -1
+      currentAction.loop = THREE.LoopOnce
+      currentAction.clampWhenFinished = true
 
-  // Set up animation direction and starting point
-  if (isReversed.value) {
-    action.timeScale = -1
-    action.time = action.getClip().duration  // Start from end
+      console.log('Playing reverse animation')
+      await new Promise((resolve) => {
+        const onFinished = () => {
+          console.log('Reverse completed')
+          mixer.removeEventListener('finished', onFinished)
+          resolve()
+        }
+        mixer.addEventListener('finished', onFinished)
+        currentAction.play()
+      })
+    }
 
-    // Add finished callback for reverse
-    action.getMixer().addEventListener('finished', () => {
-      action.stop()  // Stop when reaching start
-      resetToRest()  // Return to rest pose
-    })
-  } else {
-    action.timeScale = 1
-    action.time = 0
+    console.log('Moving camera')
+    moveCamera(type)
+
+    console.log('Starting new animation')
+    const action = mixer.clipAction(animations[type])
+    action.reset()
+    action.time = reverse ? action.getClip().duration : 0
+    action.timeScale = reverse ? -1 : 1
+    action.loop = THREE.LoopOnce
+    action.clampWhenFinished = true
+    action.play()
+
+    currentAnimation = action
+    currentAnimationType.value = type
+
+  } catch (error) {
+    console.error('Animation error:', error)
+  } finally {
+    isTransitioning.value = false
+  }
+}
+
+// Update resetToRest function to ensure complete revert
+const resetToRest = async () => {
+  if (!mixer) {
+    console.log('No mixer available for reset')
+    return
   }
 
-  action.fadeIn(0.5)
-  action.play()
+  try {
+    console.log('Starting reset to rest')
+    isTransitioning.value = true
 
-  currentAnimation = action
-  currentAnimationType.value = type
+    if (currentAnimation) {
+      console.log('Current animation exists, reversing before reset')
+      const currentAction = currentAnimation
+
+      // Stop all other actions first
+      mixer.stopAllAction()
+
+      // Set up reverse animation
+      currentAction.reset()
+      currentAction.timeScale = -1
+      currentAction.loop = THREE.LoopOnce
+      currentAction.clampWhenFinished = true
+
+      // Force animation to start from current position
+      currentAction.time = currentAction.getClip().duration *
+        (currentAction.time / currentAction.getClip().duration)
+
+      // Play reverse and wait for completion
+      await new Promise((resolve) => {
+        const onFinished = () => {
+          console.log('Reset reverse animation finished')
+          mixer.removeEventListener('finished', onFinished)
+          resolve()
+        }
+        mixer.addEventListener('finished', onFinished)
+        console.log('Starting reset reverse playback')
+        currentAction.play()
+      })
+    }
+
+    // Move camera to rest position
+    console.log('Moving camera to rest position')
+    moveCamera('rest')
+
+    // Stop all actions and reset pose
+    console.log('Stopping all actions')
+    mixer.stopAllAction()
+
+    console.log('Resetting model pose')
+    model.traverse((child) => {
+      if (child.isSkinnedMesh && child.skeleton) {
+        // Store current position
+        const currentPos = child.position.clone()
+        // Reset pose
+        child.skeleton.pose()
+        // Restore position
+        child.position.copy(currentPos)
+      }
+    })
+
+    currentAnimation = null
+    currentAnimationType.value = null
+
+  } catch (error) {
+    console.error('Reset error:', error)
+  } finally {
+    console.log('Reset completed')
+    isTransitioning.value = false
+  }
 }
 
 // Update toggleReverse to handle animation reset
@@ -363,44 +443,6 @@ const toggleReverse = () => {
 
   // Restart animation in new direction
   playAnimation(currentAnimationType.value)
-}
-
-// Update the resetToRest function
-const resetToRest = async () => {
-  if (!mixer) return
-
-  try {
-    isTransitioning.value = true
-
-    if (currentAnimation) {
-      const currentAction = currentAnimation
-      currentAction.timeScale = -1
-      currentAction.loop = THREE.LoopOnce
-      currentAction.clampWhenFinished = true
-
-      await new Promise(resolve => {
-        const onFinished = () => {
-          currentAction.getMixer().removeEventListener('finished', onFinished)
-          resolve()
-        }
-        currentAction.getMixer().addEventListener('finished', onFinished)
-      })
-
-      moveCamera('rest')
-      mixer.stopAllAction()
-
-      model.traverse((child) => {
-        if (child.isSkinnedMesh && child.skeleton) {
-          child.skeleton.pose()
-        }
-      })
-
-      currentAnimation = null
-      currentAnimationType.value = null
-    }
-  } finally {
-    isTransitioning.value = false
-  }
 }
 
 // Update the animate function
@@ -485,6 +527,11 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+.button-group {
+  display: flex;
+  gap: 4px;
+}
+
 button {
   background: #4CAF50;
   color: white;
@@ -507,6 +554,16 @@ button:disabled {
 
 button:hover:not(:disabled) {
   background: #45a049;
+}
+
+.reverse-button {
+  padding: 10px;
+  min-width: 40px;
+  background: #666;
+}
+
+.reverse-button:hover:not(:disabled) {
+  background: #555;
 }
 
 .error-message,
