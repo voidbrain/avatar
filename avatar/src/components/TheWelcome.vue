@@ -328,48 +328,61 @@ const playAnimation = async (type, reverse = false) => {
 
   try {
     isTransitioning.value = true
-    console.log('Starting new animation:', type, reverse ? '(reversed)' : '')
+    console.log('Starting animation:', type, reverse ? '(reverse)' : '')
 
-    // Stop any current animation
-    mixer.stopAllAction()
-
-    if (currentAnimation) {
+    // First handle current animation if exists and we're not reversing
+    if (currentAnimation && !reverse) {
       const currentAction = currentAnimation
+      // Set up reverse of current animation
+      currentAction.reset()
       currentAction.timeScale = -1
       currentAction.loop = THREE.LoopOnce
       currentAction.clampWhenFinished = true
 
-      console.log('Playing reverse animation')
-      await new Promise((resolve) => {
-        const onFinished = () => {
-          console.log('Reverse completed')
-          mixer.removeEventListener('finished', onFinished)
-          resolve()
-        }
-        mixer.addEventListener('finished', onFinished)
-        currentAction.play()
-      })
+      // If at start, move to end for proper reverse
+      if (currentAction.time === 0) {
+        currentAction.time = currentAction.getClip().duration
+      }
+
+      await playAndWait(currentAction)
+      mixer.stopAllAction()
     }
 
-    console.log('Moving camera')
     moveCamera(type)
 
-    console.log('Starting new animation')
-    const action = mixer.clipAction(animations[type])
-    action.reset()
-    action.time = reverse ? action.getClip().duration : 0
-    action.timeScale = reverse ? -1 : 1
-    action.loop = THREE.LoopOnce
-    action.clampWhenFinished = reverse ? false : true
-    await playAndWait(action)
-    if(reverse) {
-      resetToRest() // Reset to rest after playing
+    // For reverse playback, just play the animation in reverse and go to rest
+    if (reverse) {
+      const action = mixer.clipAction(animations[type])
+      action.reset()
+      action.time = action.getClip().duration
+      action.timeScale = -1
+      action.loop = THREE.LoopOnce
+      action.clampWhenFinished = true
+
+      await playAndWait(action)
+
+      // After reverse completes, go directly to rest without additional reverse
+      moveCamera('rest')
+      mixer.stopAllAction()
+      model.traverse((child) => {
+        if (child.isSkinnedMesh && child.skeleton) {
+          child.skeleton.pose()
+        }
+      })
+      currentAnimation = null
+      currentAnimationType.value = null
+    } else {
+      // Normal forward playback
+      const action = mixer.clipAction(animations[type])
+      action.reset()
+      action.time = 0
+      action.timeScale = 1
+      action.loop = THREE.LoopOnce
+      action.clampWhenFinished = true
+      currentAnimation = action
+      currentAnimationType.value = type
+      await playAndWait(action)
     }
-
-    console.log('Animation completed')
-
-    currentAnimation = action
-    currentAnimationType.value = type
 
   } catch (error) {
     console.error('Animation error:', error)
