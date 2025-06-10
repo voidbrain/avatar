@@ -22,7 +22,6 @@
           :disabled="loading"
           class="reverse-button"
         >
-          ⟲
         </button>
       </div>
     </div>
@@ -309,6 +308,17 @@ const moveCamera = (type) => {
   currentTransition = requestAnimationFrame(animateCamera)
 }
 
+const playAndWait = (action) => {
+  return new Promise((resolve) => {
+    const onFinished = () => {
+      mixer.removeEventListener('finished', onFinished)
+      resolve()
+    }
+    mixer.addEventListener('finished', onFinished)
+    action.play()
+  })
+}
+
 // Update playAnimation function to properly handle reverse animation
 const playAnimation = async (type, reverse = false) => {
   if (!mixer || !model || !animations[type]) {
@@ -350,8 +360,13 @@ const playAnimation = async (type, reverse = false) => {
     action.time = reverse ? action.getClip().duration : 0
     action.timeScale = reverse ? -1 : 1
     action.loop = THREE.LoopOnce
-    action.clampWhenFinished = true
-    action.play()
+    action.clampWhenFinished = reverse ? false : true
+    await playAndWait(action)
+    if(reverse) {
+      resetToRest() // Reset to rest after playing
+    }
+
+    console.log('Animation completed')
 
     currentAnimation = action
     currentAnimationType.value = type
