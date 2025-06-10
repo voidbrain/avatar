@@ -30,9 +30,11 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
 
-// Import GLB file
+// Import avatar file
 import avatarUrl from '@/assets/avatar.glb'
+// import avatarUrl from '@/assets/avatar.obj'
 
 import climbingUrl from '@/assets/Climbing Up Wall.fbx'
 import frisbeeUrl from '@/assets/Frisbee Throw.fbx'
@@ -127,27 +129,35 @@ const initThree = () => {
   }
 }
 
+// Update the loadModel function for better animation handling
 const loadModel = async () => {
   loading.value = true
   const gltfLoader = new GLTFLoader()
+  const fbxLoader = new FBXLoader()
 
   try {
+    // Load main model
     const gltf = await gltfLoader.loadAsync(avatarUrl)
     model = gltf.scene
-    // model = await objLoader.loadAsync(avatarUrl)
 
-    // Update materials
+    // Setup animation mixer first
+    mixer = new THREE.AnimationMixer(model)
+
+    // Store the bind pose
+    const bindPose = new THREE.AnimationClip('bindPose', 0, [])
+    animations.rest = bindPose
+
+    // Update materials and setup skinning
     model.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true
         child.receiveShadow = true
-
         if (child.material) {
           const oldMaterial = child.material
           child.material = new THREE.MeshStandardMaterial({
             map: oldMaterial.map,
             color: oldMaterial.color,
-            skinning: true,
+            skinning: true, // Enable skinning for animations
             roughness: 0.8,
             metalness: 0.0
           })
@@ -159,13 +169,22 @@ const loadModel = async () => {
     model.scale.set(1, 1, 1)
     scene.add(model)
 
-    // Setup animation mixer if the model has animations
-    if (gltf.animations.length > 0) {
-      mixer = new THREE.AnimationMixer(model)
-      const clip = gltf.animations[0]
-      const action = mixer.clipAction(clip)
-      action.play()
+    // Load all FBX animations
+    for (const anim of availableAnimations) {
+      try {
+        const fbx = await fbxLoader.loadAsync(anim.url)
+        if (fbx.animations.length > 0) {
+          const clip = fbx.animations[0]
+          clip.name = anim.name // Ensure animation name matches
+          animations[anim.name] = clip
+        }
+      } catch (error) {
+        console.error(`Failed to load animation ${anim.name}:`, error)
+      }
     }
+
+    // Start with bind pose
+    resetToRest()
 
     loading.value = false
   } catch (err) {
@@ -175,46 +194,60 @@ const loadModel = async () => {
   }
 }
 
-const resetToRest = () => {
-  if (!mixer) return
+// Update the playAnimation function
+const playAnimation = (type) => {
+  if (!mixer || !model || !animations[type]) {
+    console.error(`Cannot play animation: ${type}`)
+    return
+  }
 
   // Stop all current animations
   mixer.stopAllAction()
 
-  // Reset animation type
-  currentAnimationType.value = null
-  currentAnimation = null
+  // Play new animation with crossfade
+  const action = mixer.clipAction(animations[type])
+  action.reset()
+  action.setEffectiveTimeScale(1)
+  action.setEffectiveWeight(1)
+  action.fadeIn(0.5)
+  action.play()
 
-  // Optional: fade out current animation smoothly
-  if (currentAnimation) {
-    currentAnimation.fadeOut(0.5)
-  }
-}
-
-// Update playAnimation function to handle transitions better
-const playAnimation = (type) => {
-  if (!mixer || !model || !animations[type]) return
-
-  // Stop any current animation
-  mixer.stopAllAction()
-
-  if (currentAnimation) {
-    currentAnimation.fadeOut(0.5)
-  }
-
-  currentAnimation = mixer.clipAction(animations[type])
-  currentAnimation.reset().fadeIn(0.5).play()
+  currentAnimation = action
   currentAnimationType.value = type
 }
 
+// Update the resetToRest function
+const resetToRest = () => {
+  if (!mixer) return
+
+  // Stop all animations
+  mixer.stopAllAction()
+
+  // Reset to bind pose
+  model.traverse((child) => {
+    if (child.isSkinnedMesh && child.skeleton) {
+      child.skeleton.pose()
+    }
+  })
+
+  currentAnimation = null
+  currentAnimationType.value = null
+}
+
+// Update the animate function
 const animate = () => {
-  if (renderer && scene && camera) {
-    animationFrameId = requestAnimationFrame(animate)
+  requestAnimationFrame(animate)
+
+  if (mixer) {
     const delta = clock.getDelta()
+    mixer.update(delta)
+  }
 
-    if (mixer) mixer.update(delta)
-    if (controls) controls.update()
+  if (controls) {
+    controls.update()
+  }
 
+  if (renderer && scene && camera) {
     renderer.render(scene, camera)
   }
 }
