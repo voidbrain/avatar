@@ -1,3 +1,5 @@
+// useThree.ts
+// This composable initializes a Three.js scene with a camera, renderer, and controls.
 import { ref } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
@@ -11,11 +13,12 @@ interface ThreeContext {
 }
 
 export function useThree() {
+  // Make scene reactive
+  const scene = ref<THREE.Scene | null>(null)
   const threeContainer = ref<HTMLDivElement | null>(null)
   const threeLoading = ref(false)
   const error = ref<string | null>(null)
 
-  let scene: THREE.Scene | null = null
   let camera: THREE.PerspectiveCamera | null = null
   let renderer: THREE.WebGLRenderer | null = null
   let controls: OrbitControls | null = null
@@ -25,7 +28,7 @@ export function useThree() {
 
   // Define animate as a function declaration instead of arrow function
   function animate(): void {
-    if (!scene || !camera || !renderer) {
+    if (!scene.value || !camera || !renderer) {
       console.warn('Cannot animate: Three.js components not initialized')
       return
     }
@@ -37,24 +40,25 @@ export function useThree() {
       controls.update()
     }
 
-    renderer.render(scene, camera)
+    renderer.render(scene.value, camera)
   }
 
   const initThree = async (): Promise<ThreeContext> => {
     try {
       threeLoading.value = true
-      console.log('🎬 Starting Three.js initialization')
+      console.group('🎬 Three.js Initialization')
 
       const container = threeContainer.value
       if (!container) {
+        console.error('❌ Container element not found')
         throw new Error('Container element not found')
       }
       console.log('✓ Container found:', container)
 
       // Initialize scene
-      scene = new THREE.Scene()
-      scene.background = new THREE.Color(0x666666)
-      console.log('✓ Scene created')
+      scene.value = new THREE.Scene()
+      scene.value.background = new THREE.Color(0x666666)
+      console.log('✓ Scene created:', scene.value)
 
       // Initialize camera
       camera = new THREE.PerspectiveCamera(
@@ -64,7 +68,7 @@ export function useThree() {
         1000
       )
       camera.position.set(0, 1.5, 4)
-      console.log('✓ Camera initialized')
+      console.log('✓ Camera initialized:', camera)
 
       // Initialize renderer
       renderer = new THREE.WebGLRenderer({
@@ -74,33 +78,38 @@ export function useThree() {
       renderer.setSize(container.clientWidth, container.clientHeight)
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
       container.appendChild(renderer.domElement)
-      console.log('✓ Renderer configured')
+      console.log('✓ Renderer created:', renderer)
 
       // Initialize controls
       controls = new OrbitControls(camera, renderer.domElement)
       controls.target.set(0, 1, 0)
       controls.update()
-      console.log('✓ Controls setup complete')
+      console.log('✓ Controls initialized:', controls)
 
-      if (!scene || !camera || !renderer || !controls) {
-        throw new Error('Component initialization failed')
+      // Add window resize listener
+      window.addEventListener('resize', onWindowResize)
+      console.log('✓ Window resize listener added')
+
+      // Validate components
+      if (!scene.value || !camera || !renderer || !controls) {
+        console.error('❌ Component validation failed')
+        throw new Error('Component initialization incomplete')
       }
 
-      // Add window resize listener after components are initialized
-      window.addEventListener('resize', onWindowResize)
-
       const context: ThreeContext = {
-        scene,
+        scene: scene.value,
         camera,
         renderer,
         controls,
-        animate // Include animate function in context
+        animate
       }
+      console.log('🎥 Three.js Context Created:', context)
+      console.groupEnd()
 
-      console.log('✅ Three.js context created successfully')
       return context
     } catch (err) {
       console.error('❌ Three.js initialization failed:', err)
+      console.groupEnd()
       throw err
     } finally {
       threeLoading.value = false
@@ -132,10 +141,10 @@ export function useThree() {
   }
 
   return {
+    scene,  // Return the reactive reference
     threeContainer,
     threeLoading,
     error,
-    scene,
     camera,
     renderer,
     controls,

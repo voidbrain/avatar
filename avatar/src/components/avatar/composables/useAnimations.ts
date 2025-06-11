@@ -1,3 +1,5 @@
+// useAnimations.ts
+
 import { ref, type Ref, computed } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
@@ -17,7 +19,7 @@ interface ThreeContext {
 type AnimationType = 'rest' | 'climbing' | 'frisbee' | 'gaming' | 'typing'
 type AnimationMap = Record<AnimationType, THREE.AnimationClip | null>
 
-export function useAnimations(scene: THREE.Scene | null) {
+export function useAnimations() {
   const animationLoading = ref(false)
   const error = ref<string | null>(null)
   const currentAnimationType = ref<AnimationType | null>(null)
@@ -62,16 +64,14 @@ export function useAnimations(scene: THREE.Scene | null) {
   }
 
   const loadModel = async () => {
-    console.log('AnimationLanimationLoading model...')
-    scene = new THREE.Scene()
-    if (!scene) {
-      throw new Error('Scene is not initialized')
+    console.log('🔄 Loading model...')
+    
+    if (!threeContext?.scene) {
+      throw new Error('Three.js context not initialized')
     }
 
     animationLoading.value = true
     error.value = null
-
-
 
     try {
       const gltfLoader = new GLTFLoader()
@@ -101,7 +101,7 @@ export function useAnimations(scene: THREE.Scene | null) {
       model.position.set(0, 0, 0)
       model.scale.set(1, 1, 1)
       model.rotation.y = 0
-      scene.add(model)
+      threeContext.scene.add(model) // Use scene from context
 
       await Promise.all(availableAnimations.map(async (anim) => {
         try {

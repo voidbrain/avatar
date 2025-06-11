@@ -1,27 +1,6 @@
-<template>
-  <div class="container">
-    <div ref="threeContainer" class="three-avatar"></div>
-    <div class="controls">
-      <button
-        @click="resetToRest()"
-        :class="{ active: !currentAnimationType }"
-      >
-        Rest
-      </button>
-      <div v-for="anim in availableAnimations" :key="anim.name">
-        <button
-          @click="playAnimation(anim.name)"
-        
-          :class="{ active: currentAnimationType === anim.name }"
-        >
-          {{ anim.label }}
-        </button>
-      </div>
-    </div>
-  </div>
-</template>
-
 <script setup lang="ts">
+// TheWelcome.vue
+
 import { onMounted, onBeforeUnmount, computed, nextTick } from 'vue'
 import { availableAnimations } from './constants/animations'
 import { useThree } from './composables/useThree'
@@ -31,13 +10,8 @@ import { useCamera } from './composables/useCamera'
 const {
   threeContainer,
   threeLoading,
-  error: threeError,  // Rename to threeError here
-  scene,
-  camera,
-  renderer,
-  controls,
+  error: threeError,
   initThree,
-  // animate,
   cleanup
 } = useThree()
 
@@ -51,14 +25,13 @@ const {
   playAndWait,
   resetToRest,
   isReady,
-  animate, // Get animate from useAnimations
+  animate,
   animationLoading,
-  animationError
-} = useAnimations(scene)
+  animationError,
+  initThreeContext
+} = useAnimations()
 
-const { moveCamera } = useCamera(camera, controls)
-
-// Computed properties with renamed variables
+// Computed properties
 const loading = computed(() => threeLoading.value || animationLoading.value)
 const error = computed(() => threeError.value || animationError.value)
 
@@ -140,25 +113,30 @@ const playAnimation = async (type: string, reverse = false) => {
 onMounted(async () => {
   try {
     console.log('🚀 Starting initialization...')
-    
-    // Wait for container to be mounted
+
+    // Wait for the DOM to render the container
     await nextTick()
-    
+
     if (!threeContainer.value) {
+      console.error('❌ Three.js container not found')
       throw new Error('Three.js container not found')
     }
     console.log('✓ Container ready:', threeContainer.value)
 
+    // Initialize Three.js context
     const context = await initThree()
-    console.log('Context received:', {
-      hasScene: !!context?.scene,
-      hasCamera: !!context?.camera,
-      hasRenderer: !!context?.renderer,
-      hasControls: !!context?.controls
-    })
+    if (!context) {
+      console.error('❌ Failed to initialize Three.js context')
+      throw new Error('Failed to initialize Three.js context')
+    }
+    console.log('✓ Three.js context initialized:', context)
 
-    // Initialize animation system
-    console.log('🔄 Setting up animation system...')
+    // Pass context to animation system
+    initThreeContext(context)
+    console.log('✓ Animation context set')
+
+    // Load model and animations
+    console.log('🔄 Loading model and animations...')
     await loadModel()
     console.log('✓ Model loaded')
 
@@ -173,11 +151,35 @@ onMounted(async () => {
   }
 })
 
+
 onBeforeUnmount(() => {
   console.log('🧹 Cleaning up...')
   cleanup()
 })
 </script>
+
+<template>
+  <div class="container">
+    <div ref="threeContainer" class="three-avatar"></div>
+    <div class="controls">
+      <button
+        @click="resetToRest()"
+        :class="{ active: !currentAnimationType }"
+      >
+        Rest
+      </button>
+      <div v-for="anim in availableAnimations" :key="anim.name">
+        <button
+          @click="playAnimation(anim.name)"
+        
+          :class="{ active: currentAnimationType === anim.name }"
+        >
+          {{ anim.label }}
+        </button>
+      </div>
+    </div>
+  </div>
+</template>
 
 <style lang="css">
 @import './styles/style.css';
