@@ -17,12 +17,7 @@
         >
           {{ anim.label }}
         </button>
-        <button
-          @click="playAnimation(anim.name, true)"
-          :disabled="loading"
-          class="reverse-button"
-        >
-        </button>
+
       </div>
     </div>
   </div>
@@ -37,7 +32,7 @@ import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
 
 // Import avatar file
-import avatarUrl from '@/assets/untitled.glb'
+import avatarUrl from '@/assets/avatar.glb'
 // import avatarUrl from '@/assets/avatar.obj'
 
 import climbingUrl from '@/assets/Climbing Up Wall.fbx'

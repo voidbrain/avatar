@@ -16,6 +16,7 @@
     "format": "prettier --write src/"
   },
   "dependencies": {
+    "@tsconfig/node18": "^18.2.4",
     "@types/three": "^0.162.0",
     "gsap": "^3.12.5",
     "pinia": "^3.0.1",
